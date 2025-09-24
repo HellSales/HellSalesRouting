@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sales Route Optimizer — batching + home + picker + icons + geo-clusters</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    :root { --bg:#0f172a; --panel:#111827; --muted:#9ca3af; --text:#e5e7eb; --border:#374151; }
+    *{box-sizing:border-box}
+    body{margin:0;color:var(--text);background:#0b1220;font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    header{padding:14px 18px;background:rgba(17,24,39,.85);backdrop-filter:blur(6px);
+           display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);
+           position:sticky;top:0;z-index:10}
+    header h1{margin:0;font-size:16px}
+    header .small{color:#9ca3af;font-size:12px}
+    .wrap{display:grid;grid-template-columns:360px 1fr;min-height:calc(100vh - 60px)}
+    @media (max-width:1000px){.wrap{grid-template-columns:1fr}}
+    aside{background:#111827;border-right:1px solid var(--border);padding:14px 14px 20px;overflow:auto;max-height:calc(100vh - 60px)}
+    main{position:relative}
+    #map{position:sticky;top:0;height:calc(100vh - 60px);width:100%}
+    .section{margin:12px 0 16px;padding:12px;border:1px solid var(--border);border-radius:10px;background:#0b1220}
+    .section h3{margin:0 0 8px;font-size:13px;color:#9ca3af;text-transform:uppercase;letter-spacing:.12em}
+    .row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1 1 auto}
+    label{display:block;font-size:12px;color:#9ca3af;margin-bottom:6px}
+    textarea,input[type="text"],select,input[type="number"]{width:100%;background:#0a1120;color:#e5e7eb;border:1px solid var(--border);border-radius:8px;padding:10px 12px;outline:none}
+    textarea{min-height:110px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+    .btn{border:1px solid var(--border);background:#0b1425;color:#e5e7eb;padding:9px 12px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px}
+    .btn-go{background:#0e1f12;border-color:#1f4d2e;color:#dcfce7}
+    .smallnote{font-size:11px;color:#9ca3af}.error{color:#fecaca}
+    .dropzone{border:1px dashed var(--border);border-radius:8px;padding:8px;text-align:center;font-size:12px;color:#9ca3af;background:#0a1120}
+    .dropzone.drag{background:#0c1628;border-color:#4b5563}
+    table{width:100%;border-collapse:collapse}th,td{border-bottom:1px dashed var(--border);padding:6px 4px;text-align:left;font-size:12px}
+    th{color:#9ca3af;font-weight:600}tr:last-child td{border-bottom:none}
+    .chip{display:inline-flex;gap:6px;background:#0c1628;border:1px solid var(--border);padding:5px 8px;border-radius:999px;font-size:12px}
+    .badge{display:inline-block;padding:3px 8px;border-radius:999px;border:1px solid var(--border);font-size:11px;margin-right:6px}
+    .num-pin{width:24px;height:24px;line-height:24px;border-radius:50%;text-align:center;
+             color:#fff;font:700 12px/24px ui-sans-serif,system-ui; box-shadow:0 0 0 1px rgba(0,0,0,.35)}
+    .it-row{display:flex;align-items:center;gap:8px;margin:8px 0}
+    .it-actions{display:inline-flex;gap:6px;margin-left:6px}
+    .linklike{cursor:pointer;text-decoration:underline;color:#93c5fd}
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Sales Route Optimizer</h1>
+    <div class="small">OSRM • Trip / Table • NN + 2-Opt • POST/GET • Batch + Home • Batch picker + numbered icons • Geo-clusters</div>
+  </div>
+  <div class="small"><span class="chip">Saved locally as: <b>routePlannerOSRMv3</b></span></div>
+</header>
+
+<div class="wrap">
+  <aside>
+    <div class="section">
+      <h3>1) Server & Stops</h3>
+      <div class="row">
+        <div><label>OSRM server</label><input id="serverUrl" placeholder="http://127.0.0.1:5000"></div>
+        <div>
+          <label>Profile*</label>
+          <select id="profile"><option value="driving" selected>driving</option><option value="cycling">cycling *</option><option value="walking">walking *</option></select>
+        </div>
+      </div>
+
+      <label>Paste <code>Name, lat, lng</code> or <code>lat, lng</code> (one per line)</label>
+      <textarea id="coordsTa" placeholder="Client A, 46.472404, 24.224629
+46.523470, 24.272439
+Client C, 46.525457, 24.268017"></textarea>
+
+      <div class="row" style="margin-top:8px">
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv,.tsv,.txt"/>
+        <button class="btn" id="btnAddSample" type="button">Add sample</button>
+      </div>
+      <div class="dropzone" id="dropzone" style="margin-top:8px">Drag & drop Excel/CSV here</div>
+
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="btnParse" type="button">Parse to Table</button>
+        <button class="btn" id="btnClear" type="button">Clear</button>
+        <button class="btn" id="btnSelfTest" type="button">Self-test</button>
+      </div>
+      <div class="smallnote" style="margin-top:6px">* Car-only OSRM works with <b>driving</b> only.</div>
+    </div>
+
+    <div class="section">
+      <h3>2) Engine & Constraints</h3>
+      <div class="row">
+        <div>
+          <label>Optimization engine</label>
+          <select id="engine">
+            <option value="trip" selected>OSRM Trip (server optimizes)</option>
+            <option value="matrix">Local TSP (OSRM Table)</option>
+            <option value="route">Keep input order</option>
+          </select>
+        </div>
+        <div>
+          <label>Optimize by (Matrix)</label>
+          <select id="optBy"><option value="time" selected>Time</option><option value="distance">Distance</option></select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <label><input type="checkbox" id="fixStart" checked> Fix start at first</label>
+        <label><input type="checkbox" id="fixEnd"> Fix end at last</label>
+        <label><input type="checkbox" id="roundTrip"> Return to start</label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>3) Home (Start & End)</h3>
+      <div class="row">
+        <div><label>Home name</label><input id="homeName" value="Home"></div>
+        <div><label>Home lat</label><input id="homeLat" value="46.77"></div>
+        <div><label>Home lng</label><input id="homeLng" value="23.59"></div>
+      </div>
+      <div class="smallnote">Batch mode always uses Home as start & end.</div>
+    </div>
+
+    <div class="section">
+      <h3>4) OSRM Route/Trip Options</h3>
+      <div class="row">
+        <div><label>Overview</label>
+          <select id="overview"><option value="full" selected>full</option><option value="simplified">simplified</option><option value="false">false</option></select></div>
+        <div><label>Snap radius (m)</label><input type="number" id="radius" min="0" step="10" placeholder="(optional)"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Approach</label>
+          <select id="approach"><option value="">—</option><option value="curb">curb</option><option value="unrestricted">unrestricted</option></select></div>
+        <div><label>Route chunk points</label><input type="number" id="routeChunk" min="2" max="80" value="40"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>5) Matrix (/table) Options</h3>
+      <div class="row">
+        <div><label>fallback_speed (km/h)</label><input type="number" id="fallbackSpeed" min="0" step="1" value="60"></div>
+        <div><label>fallback_coordinate</label>
+          <select id="fallbackCoord"><option value="input" selected>input</option><option value="snapped">snapped</option></select></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Max table elements / call</label><input type="number" id="tableMax" min="100" step="100" value="10000"></div>
+        <div><label>Block size hint (0 = auto)</label><input type="number" id="tableBlock" min="0" step="1" value="0"></div>
+      </div>
+      <div class="smallnote">Matrix auto-chunks using sources/destinations (rows×cols ≤ Max).</div>
+    </div>
+
+    <div class="section">
+      <h3>6) Batch Mode</h3>
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="enableBatch" checked> Enable batching (Home → N stops → Home)
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Batch size</label><input type="number" id="batchSize" min="2" max="200" value="20"></div>
+        <div><label>Max batches to draw</label><input type="number" id="maxBatches" min="1" max="50" value="50"></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>Marker style</label>
+          <select id="markerStyle"><option value="icons" selected>Numbered icons</option><option value="dots">Dots</option></select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="groupProximity" checked> Group by proximity (smart batches)
+        </label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div><label>Max distance from seed (km)</label>
+          <input type="number" id="maxRadiusKm" min="0" step="1" value="0" placeholder="0 = unlimited">
+        </div>
+      </div>
+      <div class="smallnote">Geo-clustering keeps each batch local so you don’t jump 20+ km for a single stop.</div>
+    </div>
+
+    <div class="section">
+      <h3>7) Batch Viewer</h3>
+      <div class="row">
+        <div><label>Pick batch</label><select id="batchPicker"></select></div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label><input type="checkbox" id="showAllBatches"> Show all batches</label>
+        <button class="btn" id="btnZoomBatch" type="button">Zoom to batch</button>
+      </div>
+      <div class="smallnote">Use this to toggle visibility. Icons keep numbering per batch.</div>
+    </div>
+
+    <div class="section">
+      <h3>Run</h3>
+      <div class="row">
+        <button class="btn btn-go" id="btnOptimize" type="button">Optimize Route</button>
+        <button class="btn" id="btnRenderOnly" type="button">Render Current Order</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Save / Load / Export</h3>
+      <div class="row">
+        <button class="btn" id="btnSave" type="button">Save to Browser</button>
+        <button class="btn" id="btnLoad" type="button">Load from Browser</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="btnExportCsv" type="button">Export CSV</button>
+        <button class="btn" id="btnExportXlsx" type="button">Export XLSX</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Stops Table</h3>
+      <div id="stopsSummary" class="smallnote">No stops yet.</div>
+      <div style="overflow:auto;max-height:260px;margin-top:8px;border:1px solid var(--border);border-radius:8px">
+        <table id="stopsTable"><thead><tr><th>#</th><th>Name</th><th>Lat</th><th>Lng</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Itinerary</h3>
+      <div id="itineraryStats" class="smallnote">Run <b>Optimize Route</b> to see totals.</div>
+      <div style="height:6px"></div>
+      <div id="itineraryList" class="smallnote">—</div>
+    </div>
+
+    <div class="section">
+      <h3>Status</h3>
+      <div id="status" class="smallnote">Ready.</div>
+    </div>
+  </aside>
+
+  <main><div id="map"></div></main>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+/* ---------- Map ---------- */
+const map=L.map('map').setView([46.52,24.27],11);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap'}).addTo(map);
+const baseRouteLayer=L.layerGroup().addTo(map); // for single-run
+const baseMarkerLayer=L.layerGroup().addTo(map);
+
+/* ---------- State ---------- */
+let stops=[]; let POST_OK=false;
+let batches=[]; // [{layerR,layerM,bounds,totals,stopCount,order,batchStops,legs}]
+const $=id=>document.getElementById(id);
+
+/* ---------- Utils ---------- */
+function setStatus(m,t=''){const e=$('status');e.textContent=m;e.className='smallnote '+(t==='error'?'error':'');}
+function km(m){return (m/1000).toFixed(1)+' km'}
+function dur(s){const h=Math.floor(s/3600),m=Math.round((s%3600)/60);return h?`${h} hr ${String(m).padStart(2,'0')} min`:`${m} min`}
+function n6(v){return Number(v).toFixed(6)}
+function normalizeNumber(v){ if (typeof v==='number') return Number.isFinite(v)?v:NaN; if (typeof v==='string'){let t=v.trim().replace(/\u2212/g,'-').replace(/\s+/g,''); if (t.indexOf('.')===-1 && t.indexOf(',')!==-1) t=t.replace(',', '.'); const n=parseFloat(t); return Number.isFinite(n)?n:NaN;} return NaN; }
+function isNumeric(v){ return Number.isFinite(normalizeNumber(v)); }
+function colorFor(i){ const cols=['#22c55e','#60a5fa','#f59e0b','#ef4444','#a78bfa','#34d399','#f472b6','#f97316','#10b981','#eab308']; return cols[i % cols.length]; }
+
+/* ---------- Parsing ---------- */
+function parseDelimitedTextToRows(text, forcedDelim=null){
+  const lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+  let delim=forcedDelim;
+  if(!delim){ const sample=lines.find(l=>l.trim().length) || ''; const cand=[',',';','\t']; let best=',', bestCount=-1;
+    for(const d of cand){ const re=new RegExp(d==='\\t'?'\\t':d,'g'); const count=(sample.match(re)||[]).length; if(count>bestCount){ bestCount=count; best=d; } } delim=best; }
+  const rows=[]; for(const line of lines){ if(line===''){ rows.push(['']); continue; }
+    let out=[], cur='', i=0, inQ=false; while(i<line.length){ const ch=line[i];
+      if(ch==='"'){ if(inQ && line[i+1]==='"'){cur+='"'; i+=2; continue;} inQ=!inQ; i++; continue; }
+      if(!inQ && ch===delim){ out.push(cur.trim()); cur=''; i++; continue; }
+      cur+=ch; i++; } out.push(cur.trim()); rows.push(out); }
+  const allSingle = rows.length && rows.every(r=>r.length<=1 || (r.length===1 && r[0].split(/[;, \t]+/).length>=2));
+  if(allSingle){ const fbRows = lines.map(l => l.split(/[;, \t]+/).map(s=>s.trim())); if (fbRows.some(r => r.length>=2)) return fbRows; }
+  while(rows.length && rows[rows.length-1].every(c=>String(c).trim()==='')) rows.pop();
+  return rows;
+}
+function rowsToStops(rows){
+  const out=[]; for (const row of rows){
+    if(!row || !row.length) continue;
+    const nums = row.map(normalizeNumber).filter(n=>Number.isFinite(n));
+    if (nums.length >= 2){ const lat = nums[0], lng = nums[1]; const name = row.filter(v => !isNumeric(v)).join(' ').trim();
+      if (Math.abs(lat)<=90 && Math.abs(lng)<=180) out.push({ name, lat, lng }); continue; }
+    if (row.length===1){ const m = row[0].match(/(-?\d+([.,]\d+)?)\D+(-?\d+([.,]\d+)?)/);
+      if (m){ const lat = normalizeNumber(m[1]); const lng = normalizeNumber(m[3]); const name = row[0].replace(m[0], '').trim();
+        if (Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat)<=90 && Math.abs(lng)<=180) out.push({ name, lat, lng }); } }
+  } return out;
+}
+function parseTextarea(){ return rowsToStops(parseDelimitedTextToRows($('coordsTa').value)); }
+
+/* ---------- Table UI ---------- */
+function rebuildStopsTable(){
+  const tb = document.querySelector('#stopsTable tbody'); tb.innerHTML = '';
+  stops.forEach((p,i)=>{ const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${i+1}</td><td>${(p.name??'').replace(/[<>]/g,'')}</td><td>${n6(p.lat)}</td><td>${n6(p.lng)}</td>`;
+    tb.appendChild(tr); });
+  $('stopsSummary').textContent = stops.length ? `${stops.length} stop(s)` : 'No stops yet.';
+}
+
+/* ---------- Map marker helpers ---------- */
+function divIcon(num, color, isHome=false){
+  const bg=color, bd='rgba(0,0,0,.45)'; const text=isHome?'🏠':String(num);
+  return L.divIcon({className:'', html:`<div class="num-pin" style="background:${bg};border:2px solid ${bd}">${text}</div>`, iconSize:[24,24], iconAnchor:[12,12]});
+}
+function drawMarkers(stopsArr, order, colorIdx, targetLayer){
+  const style=$('markerStyle').value; const col=colorFor(colorIdx);
+  let bounds=L.latLngBounds(); let seq=0;
+  order.forEach((idx)=>{
+    const p=stopsArr[idx]; const ll=[p.lat,p.lng]; bounds.extend(ll);
+    if(style==='icons'){
+      const isHome=!!p._isHome; if(!isHome) seq+=1;
+      L.marker(ll,{icon:divIcon(isHome?'':seq,col,isHome), title:(isHome?'Home':`${seq}. ${p.name||''}`)}).addTo(targetLayer);
+    }else{
+      L.circleMarker(ll,{radius:6,color:col,weight:2,fillOpacity:.9,title:p.name||''}).addTo(targetLayer);
+    }
+  });
+  return bounds;
+}
+
+/* ---------- OSRM helpers ---------- */
+function baseUrl(){ let s=($('serverUrl').value||'http://127.0.0.1:5000').trim().replace(/\/+$/,''); if(!/^https?:\/\//i.test(s)) s='http://'+s; localStorage.setItem('osrmServer',s); $('serverUrl').value=s; return s; }
+function prof(){ return $('profile').value; }
+function coordsStr(pts){ return pts.map(p=>`${p.lng},${p.lat}`).join(';'); }
+function coordsArr(pts){ return pts.map(p=>[p.lng, p.lat]); }
+function listParam(n,v){ return Array(n).fill(v).join(';'); }
+function shouldPostCoordinates(urlWithCoords){ return urlWithCoords.length > 7000; }
+async function getJson(url, to=45000, opts={}){ const ctrl=new AbortController(); const t=setTimeout(()=>ctrl.abort('timeout'),to);
+  try{ const res=await fetch(url,{signal:ctrl.signal, ...opts}); const text=await res.text();
+    if(!res.ok){ let msg=`HTTP ${res.status}`; try{const j=JSON.parse(text); if(j.message) msg+=` — ${j.message}`;}catch{} throw new Error(msg); }
+    return JSON.parse(text||'{}'); } finally{ clearTimeout(t); } }
+
+/* POST probe */
+async function probePostSupport(){
+  const server=baseUrl(), p=prof();
+  try{
+    const url=`${server}/table/v1/${p}`;
+    const body={coordinates:[[24.27,46.52],[24.30,46.53]], sources:[0], destinations:[1]};
+    const res=await getJson(url, 6000, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    POST_OK = !!res && (res.code==='Ok' || res.durations);
+    setStatus(POST_OK ? 'Self-test OK: POST available.' : 'Self-test: GET-only (limit stops).');
+  }catch(e){
+    POST_OK=false;
+    const mixed = (location.protocol==='https:' && baseUrl().startsWith('http:'));
+    setStatus('Self-test error: '+e.message+(mixed?' — Mixed content. Serve page over HTTP or proxy OSRM via HTTPS.':''), 'error');
+  }
+}
+$('btnSelfTest')?.addEventListener('click', probePostSupport);
+
+/* ---------- Table (matrix) ---------- */
+async function osrmTableChunked(pts){
+  const server=baseUrl(), p=prof(), N=pts.length;
+  const maxElems=Math.max(100, Number($('tableMax').value||10000));
+  let block=Number($('tableBlock').value||0);
+  if(block<=0){ block=Math.floor(Math.sqrt(maxElems)); block=Math.max(1, Math.min(N, block)); }
+  const fs=Number($('fallbackSpeed').value||0); const fc=$('fallbackCoord').value;
+  const dur=Array.from({length:N},()=>Array(N).fill(null)); const dis=Array.from({length:N},()=>Array(N).fill(null));
+
+  if (POST_OK){
+    const base=`${server}/table/v1/${p}`;
+    const commonParams=new URLSearchParams({annotations:'duration,distance'});
+    if(fs>0) commonParams.set('fallback_speed', String(fs)); if(fc) commonParams.set('fallback_coordinate', fc);
+    const allCoords = coordsArr(pts);
+    for(let i=0;i<N;i+=block){
+      const srcIdx=Array.from({length:Math.min(block,N-i)},(_,k)=>i+k);
+      for(let j=0;j<N;j+=block){
+        let dstIdx=Array.from({length:Math.min(block,N-j)},(_,k)=>j+k);
+        if(srcIdx.length*dstIdx.length>maxElems){ const maxD=Math.max(1, Math.floor(maxElems/srcIdx.length)); dstIdx = dstIdx.slice(0, maxD); }
+        const url=`${base}?${commonParams.toString()}`;
+        const body={ coordinates: allCoords, sources: srcIdx, destinations: dstIdx };
+        const data=await getJson(url, 45000, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const D=data.durations||[], S=data.distances||[];
+        for(let a=0;a<srcIdx.length;a++) for(let b=0;b<dstIdx.length;b++){ const I=srcIdx[a], J=dstIdx[b]; if(D[a] && D[a][b]!=null) dur[I][J]=D[a][b]; if(S[a] && S[a][b]!=null) dis[I][J]=S[a][b]; }
+      }
+    }
+    return {durations:dur, distances:dis};
+  }
+
+  const coords=coordsStr(pts);
+  const sampleUrl = `${server}/table/v1/${p}/${coords}?annotations=duration`;
+  if (sampleUrl.length > 7000) throw new Error('GET-only mode can’t handle this many stops. Enable POST or reduce stops.');
+  for(let i=0;i<N;i+=block){
+    const srcIdx=Array.from({length:Math.min(block,N-i)},(_,k)=>i+k);
+    for(let j=0;j<N;j+=block){
+      let dstIdx=Array.from({length:Math.min(block,N-j)},(_,k)=>j+k);
+      if(srcIdx.length*dstIdx.length>maxElems){ const maxD=Math.max(1, Math.floor(maxElems/srcIdx.length)); dstIdx = dstIdx.slice(0, maxD); }
+      const params=new URLSearchParams({annotations:'duration,distance', sources:srcIdx.join(';'), destinations:dstIdx.join(';')});
+      if(fs>0) params.set('fallback_speed', String(fs)); if(fc) params.set('fallback_coordinate', fc);
+      const url=`${server}/table/v1/${p}/${coords}?${params.toString()}`;
+      const data=await getJson(url);
+      const D=data.durations||[], S=data.distances||[];
+      for(let a=0;a<srcIdx.length;a++) for(let b=0;b<dstIdx.length;b++){ const I=srcIdx[a], J=dstIdx[b]; if(D[a] && D[a][b]!=null) dur[I][J]=D[a][b]; if(S[a] && S[a][b]!=null) dis[I][J]=S[a][b]; }
+    }
+  }
+  return {durations:dur, distances:dis};
+}
+
+/* ---------- Trip builders ---------- */
+function buildTripRequestBatch(pts){
+  const server=baseUrl(), p=prof(); const ov=$('overview').value;
+  const params=new URLSearchParams({overview:ov, geometries:'geojson', roundtrip:'false', source:'first', destination:'last'});
+  const rad=Number($('radius').value||0); if(rad>0) params.set('radiuses', listParam(pts.length, rad));
+  const appr=$('approach').value; if(appr) params.set('approaches', listParam(pts.length, appr));
+  const urlWithCoords = `${server}/trip/v1/${p}/${coordsStr(pts)}?${params.toString()}`;
+  if (POST_OK && shouldPostCoordinates(urlWithCoords)) return { url:`${server}/trip/v1/${p}?${params.toString()}`, body:{coordinates: coordsArr(pts)} };
+  return { url: urlWithCoords, body: null };
+}
+
+/* ---------- Routing (chunked) with legs ---------- */
+async function drawRoute(stopsArr, order, colorIdx, layer){
+  const server=baseUrl(), p=prof(), ov=$('overview').value, rad=Number($('radius').value||0), appr=$('approach').value;
+  const per=Math.max(2, Math.min(80, Number($('routeChunk').value||40)));
+  const col=colorFor(colorIdx);
+  const pts=order.map(i=>stopsArr[i]); let totalDist=0,totalDur=0;
+  const legs=[];
+  function mkParams(n){ const q=new URLSearchParams({overview:ov, geometries:'geojson', steps:'false'}); if(rad>0) q.set('radiuses',listParam(n,rad)); if(appr) q.set('approaches',listParam(n,appr)); return q; }
+  for(let i=0;i<pts.length-1;){
+    const chunk=[pts[i]]; const chunkIdx=[order[i]];
+    let j=i+1; while(j<pts.length && chunk.length<per){ chunk.push(pts[j]); chunkIdx.push(order[j]); j++; }
+    const urlWithCoords=`${server}/route/v1/${p}/${coordsStr(chunk)}?${mkParams(chunk.length).toString()}`;
+    let data;
+    if (POST_OK && shouldPostCoordinates(urlWithCoords)){
+      const url=`${server}/route/v1/${p}?${mkParams(chunk.length).toString()}`;
+      data=await getJson(url, 45000, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ coordinates: coordsArr(chunk) })});
+    } else { data=await getJson(urlWithCoords); }
+    const r=data.routes?.[0]; if(!r) throw new Error('route failed');
+    L.geoJSON(r.geometry,{style:{weight:4,color:col,opacity:0.9}}).addTo(layer);
+    totalDist+=r.distance||0; totalDur+=r.duration||0;
+
+    // legs per chunk (each consecutive pair)
+    const legCount = chunk.length-1;
+    for(let k=0;k<legCount;k++){
+      const a = chunkIdx[k], b = chunkIdx[k+1];
+      const l = (r.legs && r.legs[k]) ? r.legs[k] : {distance:0,duration:0};
+      legs.push({a, b, distance:l.distance||0, duration:l.duration||0});
+    }
+    i += (chunk.length-1);
+  }
+  return {distance:totalDist, duration:totalDur, legs};
+}
+
+/* ---------- Optimizers ---------- */
+function nn(cost, fixStart, fixEnd, round){
+  const n=cost.length, start=0, end=fixEnd?n-1:null, used=Array(n).fill(false); used[start]=true; const ord=[start];
+  while(ord.length < (fixEnd?n-1:n)){
+    const last=ord[ord.length-1]; let best=-1, bc=Infinity;
+    for(let j=0;j<n;j++){ if(used[j]) continue; if(fixEnd && j===end && ord.length < n-1) continue; const c=cost[last][j]; if(c<bc){bc=c;best=j;} }
+    if(best<0) break; used[best]=true; ord.push(best);
+  }
+  if(fixEnd) ord.push(end); if(round) ord.push(ord[0]); return ord;
+}
+function twoOpt(order, cost, round, fixStart, fixEnd){
+  const n=order.length;
+  function tourCost(o){ let s=0; for(let i=0;i<o.length-1;i++) s+=cost[o[i]][o[i+1]]; return s; }
+  function canSwap(i,k){ if(fixStart && (i===0||k===0)) return false; if(fixEnd){ const e=round? n-2 : n-1; if([i,k,i+1,k+1].includes(e)) return false; } if(!round && i===0) return false; return true; }
+  let best=order.slice(), bestC=tourCost(best), improved=true;
+  while(improved){ improved=false;
+    for(let i=1;i<best.length-2;i++){ for(let k=i+1;k<best.length-1;k++){
+      if(!canSwap(i,k)) continue; const cand=best.slice(0,i).concat(best.slice(i,k+1).reverse(), best.slice(k+1));
+      const c=tourCost(cand); if(c+1e-6<bestC){best=cand;bestC=c;improved=true;} } } }
+  return best;
+}
+
+/* ---------- Smart batching (geo-clusters) ---------- */
+function splitIntoBatches(arr, size){ const out=[]; for(let i=0;i<arr.length;i+=size) out.push(arr.slice(i,i+size)); return out; }
+function getHome(){ const name=($('homeName').value||'Home').trim(); const lat=normalizeNumber($('homeLat').value); const lng=normalizeNumber($('homeLng').value); if(!Number.isFinite(lat)||!Number.isFinite(lng)) return null; return {name, lat, lng, _isHome:true}; }
+
+function smartCluster(stops, batchSize, maxRadiusKm=0, home=null){
+  if (!stops.length) return [];
+  const lat0 = (home?.lat ?? stops[0].lat) * Math.PI/180;
+  const kx = 111320 * Math.cos(lat0), ky = 110540;
+  const P = stops.map(s => ({...s, _x:(s.lng)*kx, _y:(s.lat)*ky}));
+
+  const K = Math.ceil(P.length / batchSize);
+  const seeds = [];
+
+  const pickSeed = (pool) => {
+    if (seeds.length === 0) return pool[0];
+    let best = pool[0], bestD = -1;
+    for (const p of pool){
+      let dmin = Infinity;
+      for (const q of seeds){
+        const dx=p._x-q._x, dy=p._y-q._y;
+        const d=dx*dx+dy*dy;
+        if (d<dmin) dmin=d;
+      }
+      if (dmin>bestD){ bestD=dmin; best=p; }
+    }
+    return best;
+  };
+
+  const pool = P.slice();
+  seeds.push(pool[0]);
+  while (seeds.length < K && seeds.length < pool.length){
+    seeds.push(pickSeed(pool));
+  }
+
+  const caps = Array(seeds.length).fill(0);
+  const clusters = Array.from({length:seeds.length}, ()=>[]);
+  const overflow = [];
+  for (const p of P){
+    let best=-1, bestD=Infinity;
+    for (let i=0;i<seeds.length;i++){
+      if (caps[i] >= batchSize) continue;
+      const d=Math.hypot(p._x-seeds[i]._x, p._y-seeds[i]._y);
+      if (d<bestD){ bestD=d; best=i; }
+    }
+    if (best<0){ overflow.push(p); continue; }
+    if (maxRadiusKm>0 && bestD > maxRadiusKm*1000){ overflow.push(p); continue; }
+    clusters[best].push(p); caps[best]++;
+  }
+
+  while (overflow.length){
+    const seed = overflow.shift();
+    const idx = clusters.push([seed]) - 1;
+    caps.push(1);
+    seeds.push(seed);
+    for (let i=overflow.length-1; i>=0 && caps[idx] < batchSize; i--){
+      const q = overflow[i];
+      const d = Math.hypot(q._x - seed._x, q._y - seed._y);
+      if (maxRadiusKm===0 || d <= maxRadiusKm*1000){
+        clusters[idx].push(q); caps[idx]++; overflow.splice(i,1);
+      }
+    }
+  }
+
+  return clusters
+    .filter(c => c.length)
+    .map(c => c.map(p => ({name:p.name, lat:p.lat, lng:p.lng})));
+}
+
+function clearBatches(){ batches.forEach(b=>{ map.removeLayer(b.layerR); map.removeLayer(b.layerM); }); batches=[]; refreshBatchPicker(); }
+function refreshBatchPicker(){ const sel=$('batchPicker'); sel.innerHTML=''; batches.forEach((b,i)=>{ const o=document.createElement('option'); o.value=String(i); o.textContent=`Batch ${i+1} — ${b.stopCount} stops`; sel.appendChild(o); }); $('batchPicker').disabled=!batches.length; }
+
+/* ---------- Visibility ---------- */
+function applyBatchVisibility(){
+  const showAll=$('showAllBatches').checked; const idx=parseInt($('batchPicker').value||'0',10);
+  batches.forEach((b,i)=>{ const vis = showAll || i===idx; if(vis){ b.layerR.addTo(map); b.layerM.addTo(map); } else { map.removeLayer(b.layerR); map.removeLayer(b.layerM); } });
+}
+$('showAllBatches').addEventListener('change', ()=>{ applyBatchVisibility(); if(!$('showAllBatches').checked){ renderBatchItinerary(parseInt($('batchPicker').value||'0',10)); }});
+$('batchPicker').addEventListener('change', ()=>{ applyBatchVisibility(); renderBatchItinerary(parseInt($('batchPicker').value||'0',10)); });
+$('btnZoomBatch').addEventListener('click', ()=>{ const i=parseInt($('batchPicker').value||'0',10); if(batches[i]) map.fitBounds(batches[i].bounds.pad(0.2)); });
+
+/* ---------- Itinerary rendering ---------- */
+function renderBatchItinerary(idx){
+  const b=batches[idx]; if(!b){ $('itineraryList').innerHTML='<div class="smallnote">—</div>'; return; }
+  let totM=0, totS=0;
+  let html=`<div class="it-row"><span class="badge" style="border-color:${colorFor(idx)}">Batch ${idx+1}</span>
+            <span class="chip">Stops: <b>${b.stopCount}</b></span>
+            <span class="chip">Batch: <b>${km(b.totals.distance)}</b></span>
+            <span class="chip"><b>${dur(b.totals.duration)}</b></span>
+            <span class="it-actions"><span class="linklike" data-action="overview">Back to overview</span></span></div>
+            <ol style="margin:6px 0 0;padding-left:18px">`;
+  b.legs.forEach((lg,i)=>{
+    const A=b.batchStops[lg.a], B=b.batchStops[lg.b];
+    totM+=lg.distance; totS+=lg.duration;
+    html+=`<li style="margin:8px 0">
+      <b>${A._isHome?'Home':(A.name||('Stop '+(lg.a+1)))}</b> → <b>${B._isHome?'Home':(B.name||('Stop '+(lg.b+1)))}</b>
+      <div class="smallnote">Leg ${i+1}: ${km(lg.distance)} • ${dur(lg.duration)}</div>
+    </li>`;
+  });
+  html+='</ol>';
+  $('itineraryList').innerHTML=html;
+  $('itineraryStats').innerHTML=`<div class="chip">Total distance (batch): <b>${km(totM)}</b></div> <div class="chip">Total time (batch): <b>${dur(totS)}</b></div>`;
+}
+
+function renderOverviewItinerary(){
+  let html='', grandDist=0, grandDur=0;
+  batches.forEach((b,i)=>{
+    grandDist+=b.totals.distance; grandDur+=b.totals.duration;
+    html += `<div class="it-row">
+      <span class="badge" style="border-color:${colorFor(i)}">Batch ${i+1}</span>
+      <span class="smallnote">Stops: ${b.stopCount}</span>
+      <span class="chip">Batch: <b>${km(b.totals.distance)}</b></span>
+      <span class="chip"><b>${dur(b.totals.duration)}</b></span>
+      <span class="it-actions"><span class="linklike" data-batch="${i}">View</span></span>
+    </div>`;
+  });
+  $('itineraryList').innerHTML = html || '<div class="smallnote">No batches rendered.</div>';
+  $('itineraryStats').innerHTML = `<div class="chip">Grand total distance: <b>${km(grandDist)}</b></div> <div class="chip">Grand total time: <b>${dur(grandDur)}</b></div>`;
+}
+$('itineraryList').addEventListener('click', (e)=>{
+  const t=e.target;
+  if(t.dataset.batch){ const i=parseInt(t.dataset.batch,10); $('batchPicker').value=String(i); $('showAllBatches').checked=false; applyBatchVisibility(); renderBatchItinerary(i); }
+  if(t.dataset.action==='overview'){ renderOverviewItinerary(); $('showAllBatches').checked=true; applyBatchVisibility(); }
+});
+
+/* ---------- Main actions ---------- */
+async function optimize(){
+  const parsed = parseTextarea(); if (parsed.length >= 2) { stops = parsed; rebuildStopsTable(); }
+  if(stops.length<2) return setStatus('Need at least two stops.','error');
+  baseRouteLayer.clearLayers(); baseMarkerLayer.clearLayers(); clearBatches(); setStatus('Working…');
+
+  const engine=$('engine').value; const batchEnabled=$('enableBatch').checked;
+  const batchSize=Math.max(2, Math.min(200, Number($('batchSize').value||20)));
+  const maxBatches=Math.max(1, Math.min(50, Number($('maxBatches').value||50)));
+
+  try{
+    if(!batchEnabled){
+      let order=[...stops.keys()]; if($('roundTrip').checked) order=order.concat(order[0]);
+      const bounds = drawMarkers(stops, order, 0, baseMarkerLayer);
+      const totals = await drawRoute(stops, order, 0, baseRouteLayer);
+      map.fitBounds(bounds.pad(0.2));
+      $('itineraryList').innerHTML='<div class="smallnote">Rendered current order (no optimization).</div>';
+      $('itineraryStats').innerHTML=`<div class="chip">Total distance: <b>${km(totals.distance)}</b></div> <div class="chip">Total time: <b>${dur(totals.duration)}</b></div>`;
+      setStatus('Done (Keep order).'); return;
+    }
+
+    // -------- Batch mode --------
+    const home=getHome(); if(!home){ setStatus('Batch mode requires valid Home lat/lng.','error'); return; }
+
+    const useSmart = $('groupProximity').checked;
+    const maxRadiusKm = Number($('maxRadiusKm').value||0);
+
+    const chunks = useSmart
+      ? smartCluster(stops.slice(), batchSize, maxRadiusKm, home)
+      : splitIntoBatches(stops.slice(), batchSize);
+
+    let drawn=0;
+    for(let bi=0; bi<chunks.length && drawn<maxBatches; bi++){
+      const chunk = chunks[bi];
+      const batchStops = [{...home}, ...chunk, {...home}];
+
+      // Decide order
+      let order;
+      if(engine==='trip'){
+        const req=buildTripRequestBatch(batchStops);
+        const data=await getJson(req.url, 60000, req.body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(req.body)} : {});
+        if(!(data && data.code==='Ok' && data.trips?.length)) throw new Error(data && (data.message||data.code)||'Trip failed');
+        order=new Array(batchStops.length); (data.waypoints||[]).forEach((wp,i)=>order[wp.waypoint_index]=i);
+      }else if(engine==='matrix'){
+        const M=await osrmTableChunked(batchStops);
+        const use = $('optBy').value==='time' ? M.durations : M.distances;
+        for(let i=0;i<use.length;i++) for(let j=0;j<use.length;j++) if(use[i][j]==null) use[i][j]=1e12;
+        order=twoOpt(nn(use,true,true,false),use,false,true,true);
+      }else{
+        order=[...batchStops.keys()];
+      }
+
+      const layerR=L.layerGroup().addTo(map);
+      const layerM=L.layerGroup().addTo(map);
+      const bounds = drawMarkers(batchStops, order, bi, layerM);
+      const totals = await drawRoute(batchStops, order, bi, layerR);
+
+      batches.push({layerR, layerM, bounds, totals, stopCount:chunk.length, order, batchStops, legs: totals.legs});
+      drawn++;
+    }
+
+    refreshBatchPicker();
+    applyBatchVisibility();
+    if(batches[0]) map.fitBounds(batches[0].bounds.pad(0.2));
+    renderOverviewItinerary();
+    setStatus(`Done. Batches drawn: ${drawn}/${Math.ceil(stops.length/batchSize)}.`);
+  }catch(e){
+    console.error(e);
+    setStatus('OSRM error: '+(e.message||String(e))+(POST_OK?'':' — If this is a long list, enable POST via proxy.'),'error');
+  }
+}
+
+async function renderCurrent(){
+  const parsed = parseTextarea(); if (parsed.length >= 2) { stops = parsed; rebuildStopsTable(); }
+  if(stops.length<2) return setStatus('Need at least two stops.','error');
+  baseRouteLayer.clearLayers(); baseMarkerLayer.clearLayers();
+  let order=[...stops.keys()]; if($('roundTrip').checked) order=order.concat(order[0]);
+  const bounds = drawMarkers(stops, order, 0, baseMarkerLayer);
+  const totals=await drawRoute(stops, order, 0, baseRouteLayer).catch(err=>setStatus('Route error: '+err.message,'error'));
+  if(totals){
+    map.fitBounds(bounds.pad(0.2));
+    $('itineraryList').innerHTML='<div class="smallnote">Rendered current order (no optimization).</div>';
+    $('itineraryStats').innerHTML=`<div class="chip">Total distance: <b>${km(totals.distance)}</b></div> <div class="chip">Total time: <b>${dur(totals.duration)}</b></div>`;
+    setStatus('Done.');
+  }
+}
+
+/* ---------- Import/Export ---------- */
+function decodeArrayBufferToText(ab){ const u8=new Uint8Array(ab);
+  if (u8.length>=2){ const b0=u8[0],b1=u8[1],b2=u8[2];
+    if (b0===0xFE && b1===0xFF) return new TextDecoder('utf-16be').decode(u8.subarray(2));
+    if (b0===0xFF && b1===0xFE) return new TextDecoder('utf-16le').decode(u8.subarray(2));
+    if (u8.length>=3 && b0===0xEF && b1===0xBB && b2===0xBF) return new TextDecoder('utf-8').decode(u8.subarray(3)); }
+  return new TextDecoder('utf-8').decode(u8);
+}
+function handleFile(file){
+  const ext=(file.name.split('.').pop()||'').toLowerCase();
+  const isCSV=ext==='csv', isTSV=ext==='tsv', isTXT=ext==='txt', isXLS=ext==='xlsx'||ext==='xls';
+  const reader=new FileReader();
+  if (isCSV || isTSV || isTXT){
+    reader.onload=(e)=>{ try{
+      const text=decodeArrayBufferToText(e.target.result);
+      const forcedDelim = (isTSV || isTXT) ? '\t' : null;
+      const rows=parseDelimitedTextToRows(text, forcedDelim);
+      const parsed=rowsToStops(rows);
+      if(!parsed.length) throw new Error('No rows with coordinates found.');
+      stops=parsed; rebuildStopsTable(); setStatus(`${file.name} loaded (${stops.length} stop${stops.length===1?'':'s'}).`);
+    }catch(err){ console.error(err); setStatus('Import error: '+err.message,'error'); } };
+    reader.readAsArrayBuffer(file); return;
+  }
+  if (isXLS){
+    if (typeof XLSX==='undefined' || !XLSX.read){ setStatus('Excel import requires SheetJS. Use CSV/TSV/TXT instead.', 'error'); return; }
+    reader.onload=(e)=>{ try{
+      const wb=XLSX.read(e.target.result,{type:'array'}); const ws=wb.Sheets[wb.SheetNames[0]];
+      const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      const parsed=rowsToStops(rows); if(!parsed.length) throw new Error('No rows with coordinates found.');
+      stops=parsed; rebuildStopsTable(); setStatus(`${file.name} loaded (${stops.length} stop${stops.length===1?'':'s'}).`);
+    }catch(err){ console.error(err); setStatus('Import error: '+err.message,'error'); } };
+    reader.readAsArrayBuffer(file); return;
+  }
+  setStatus('Unsupported file type. Use .csv/.tsv/.txt/.xlsx/.xls', 'error');
+}
+
+/* ---------- Wiring & boot ---------- */
+document.addEventListener('DOMContentLoaded', ()=>{
+  $('serverUrl').value=localStorage.getItem('osrmServer')||'http://127.0.0.1:5000';
+  $('btnAddSample').onclick=()=>{ $('coordsTa').value=['Client A, 46.472404, 24.224629','46.523470, 24.272439','Client C, 46.525457, 24.268017','Hub, 46.579299, 24.371866'].join('\n'); setStatus('Sample added.'); };
+  $('btnParse').onclick=()=>{ stops=parseTextarea(); rebuildStopsTable(); setStatus(`Parsed ${stops.length} stop(s).`); };
+  $('btnClear').onclick=()=>{ stops=[]; rebuildStopsTable(); baseMarkerLayer.clearLayers(); baseRouteLayer.clearLayers(); clearBatches(); setStatus('Cleared.'); };
+  $('fileInput').addEventListener('change', (e)=>{ const f=e.target.files?.[0]; if(f) handleFile(f); e.target.value=''; });
+  ['dragenter','dragover','dragleave','drop'].forEach(evt=>{ document.addEventListener(evt, (e)=>{ e.preventDefault(); e.stopPropagation(); }, false); });
+  const dz=$('dropzone'); dz.addEventListener('dragover', (e)=>{ e.preventDefault(); e.dataTransfer.dropEffect='copy'; dz.classList.add('drag'); });
+  dz.addEventListener('dragenter', ()=>dz.classList.add('drag')); dz.addEventListener('dragleave', ()=>dz.classList.remove('drag')); dz.addEventListener('drop', (e)=>{ dz.classList.remove('drag'); const file = e.dataTransfer.files?.[0]; if (file) handleFile(file); });
+
+  $('btnOptimize').onclick=optimize; $('btnRenderOnly').onclick=()=>setStatus('Use “Optimize Route” in batch mode to create batches.');
+  $('btnSave').onclick=()=>{ localStorage.setItem('routePlannerOSRMv3', JSON.stringify({stops})); setStatus('Saved to browser.'); };
+  $('btnLoad').onclick=()=>{ const s=localStorage.getItem('routePlannerOSRMv3'); if(!s) return setStatus('Nothing saved.','error');
+    try{const o=JSON.parse(s); if(Array.isArray(o.stops)){stops=o.stops; rebuildStopsTable(); setStatus('Loaded from browser.');}}catch(e){ setStatus('Load error: '+e.message,'error'); } };
+
+  $('btnExportCsv').onclick=()=>{ const rows=[['Order','Name','Lat','Lng']].concat(stops.map((p,i)=>[i+1,p.name||'',p.lat,p.lng]));
+    const csv=rows.map(r=>r.map(v=>{const s=String(v??'');return (s.includes(',')||s.includes('"'))?`"${s.replace(/"/g,'""')}"`:s}).join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='stops.csv'; a.click(); URL.revokeObjectURL(a.href); };
+
+  $('btnExportXlsx').onclick=()=>{ if(typeof XLSX==='undefined'||!XLSX.utils){ setStatus('XLSX library not loaded. Use CSV export.','error'); return; }
+    const rows=stops.map((p,i)=>({Order:i+1,Name:p.name||'',Lat:p.lat,Lng:p.lng})); const ws=XLSX.utils.json_to_sheet(rows);
+    const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Stops'); XLSX.writeFile(wb,'stops.xlsx'); };
+
+  // Prevent accidental page refresh with Enter in inputs
+  document.addEventListener('keydown',(e)=>{ if(e.key==='Enter' && (e.target.tagName==='INPUT' || e.target.tagName==='SELECT')) e.preventDefault(); });
+
+  probePostSupport();
+});
+</script>
+</body>
+</html>
